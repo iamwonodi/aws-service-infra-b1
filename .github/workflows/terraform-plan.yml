@@ -1,0 +1,263 @@
+name: Terraform Plan
+
+# Plans every enabled environment (.github/environments.json) whose Terraform, or
+# the shared modules, changed, and comments the plan on the pull request. The plan
+# is saved: terraform-apply.yml applies exactly this plan once the PR is merged.
+#
+# Runs under the <environment>-plan GitHub Environment, so a plan can be guarded
+# (a required reviewer) separately from the apply that changes the live
+# environment. That environment needs its OWN TF_AWS_ROLE_ARN secret and
+# AWS_REGION variable; scripts/init-service.sh and scripts/fetch-role-arn.sh set
+# both.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "infrastructure/**"
+      - "modules/**"
+      - ".terraform-version"
+      - ".github/environments.json"
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to plan"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+
+  detect-changes:
+    name: Detect Target Environments
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.resolve.outputs.environments }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Target Environments
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUESTED: ${{ github.event.inputs.environment }}
+        run: |
+          if [[ "${EVENT}" == "pull_request" ]]; then
+            ENVIRONMENTS="$(bash scripts/ci/resolve-environments.sh pull_request "${BASE_SHA}" "${HEAD_SHA}")"
+          else
+            ENVIRONMENTS="$(bash scripts/ci/resolve-environments.sh workflow_dispatch "${REQUESTED}")"
+          fi
+          echo "environments=${ENVIRONMENTS}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved environments: ${ENVIRONMENTS}"
+
+  plan:
+    name: Plan (${{ matrix.environment }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.environments != '[]' && needs.detect-changes.outputs.environments != ''
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJson(needs.detect-changes.outputs.environments) }}
+
+    environment: ${{ matrix.environment }}-plan
+
+    concurrency:
+      group: terraform-plan-${{ matrix.environment }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+    steps:
+
+      - name: Resolve Infrastructure Commit
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "INFRASTRUCTURE_SHA=${{ github.event.pull_request.head.sha }}" >> "${GITHUB_ENV}"
+          else
+            echo "INFRASTRUCTURE_SHA=${{ github.sha }}" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Checkout Infrastructure
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.INFRASTRUCTURE_SHA }}
+
+      - name: Read Terraform Version
+        run: echo "TF_VERSION=$(tr -d '[:space:]' < .terraform-version)" >> "${GITHUB_ENV}"
+
+      # Refuses to plan while a value still holds the CHANGE_ME placeholder.
+      - name: Check Placeholders
+        run: bash scripts/ci/check-placeholders.sh infrastructure/${{ matrix.environment }}
+
+      - name: Read Service Identity
+        run: bash scripts/ci/read-service-info.sh infrastructure/${{ matrix.environment }} >> "${GITHUB_ENV}"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.TF_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform -chdir=infrastructure/${{ matrix.environment }} init -input=false -lockfile=readonly
+
+      # From the repository root, so the modules are checked too.
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform -chdir=infrastructure/${{ matrix.environment }} validate
+
+      # ----------------------------------------------------------------------
+      # PORT REGISTRY (optional)
+      #
+      # Set the PORT_REGISTRY_REPOSITORY variable (OWNER/REPO) and the
+      # PORT_REGISTRY_TOKEN secret to enforce that no two services on a tier share a
+      # host port, and that a service name belongs to one repository. Without
+      # them this check is SKIPPED and nothing else stops two services choosing
+      # the same port. This step only READS: an abandoned pull request claims
+      # nothing. The claim is made by terraform-apply.yml after a successful apply.
+      # ----------------------------------------------------------------------
+      - name: Checkout Port Registry
+        if: vars.PORT_REGISTRY_REPOSITORY != ''
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.PORT_REGISTRY_REPOSITORY }}
+          token: ${{ secrets.PORT_REGISTRY_TOKEN }}
+          path: registry
+
+      - name: Check Port Registry
+        if: vars.PORT_REGISTRY_REPOSITORY != ''
+        run: |
+          bash scripts/ci/port-registry.sh check \
+            --registry-dir registry \
+            --environment "${{ matrix.environment }}" \
+            --tier "${SERVICE_TIER}" \
+            --service "${SERVICE_NAME}" \
+            --type "${SERVICE_TYPE}" \
+            --port "${SERVICE_PORT}" \
+            --repo "${{ github.repository }}"
+
+      - name: Port Registry Not Configured
+        if: vars.PORT_REGISTRY_REPOSITORY == ''
+        run: |
+          echo "::warning::PORT_REGISTRY_REPOSITORY is not set: nothing enforces that this service's port is unique on its tier."
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          set +e
+          terraform -chdir=infrastructure/${{ matrix.environment }} plan \
+            -input=false \
+            -out=tfplan \
+            -detailed-exitcode
+          echo "exitcode=$?" >> "${GITHUB_OUTPUT}"
+          set -e
+
+      - name: Render Plan As Text
+        if: steps.plan.outputs.exitcode == '2'
+        run: terraform -chdir=infrastructure/${{ matrix.environment }} show -no-color tfplan > infrastructure/${{ matrix.environment }}/tfplan.txt
+
+      - name: Create Deployment Metadata
+        if: steps.plan.outputs.exitcode == '2'
+        run: |
+          bash scripts/ci/create-deployment-metadata.sh \
+            "infrastructure/${{ matrix.environment }}" \
+            "${{ matrix.environment }}" \
+            "${INFRASTRUCTURE_SHA}"
+
+      - name: Upload Plan Artifact
+        if: steps.plan.outputs.exitcode == '2'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tfplan-${{ matrix.environment }}-${{ github.run_id }}
+          path: |
+            infrastructure/${{ matrix.environment }}/tfplan
+            infrastructure/${{ matrix.environment }}/deployment-metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Comment Plan On Pull Request
+        if: github.event_name == 'pull_request' && always() && steps.plan.outcome != 'skipped'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const environment = '${{ matrix.environment }}';
+            const marker = `<!-- terraform-plan-${environment} -->`;
+            // Embedded in every branch below, regardless of outcome, so
+            // terraform-apply.yml can find the run that produced this PR's
+            // plan(s) by reading this comment back — deliberately NOT
+            // relying on the GitHub Workflow Runs API's head_sha filter
+            // matching a PR's real head commit for pull_request-triggered
+            // runs, which could not be confirmed with confidence. Reading
+            // our own already-posted comment is a mechanism we control and
+            // have already verified end-to-end.
+            const runIdMarker = `<!-- run-id: ${context.runId} -->`;
+
+            let body;
+            const exitcode = '${{ steps.plan.outputs.exitcode }}';
+
+            if (exitcode === '0') {
+              body = `${marker}\n${runIdMarker}\n### Terraform Plan (${environment})\nNo changes. Infrastructure matches the configuration.`;
+            } else if (exitcode === '2') {
+              let planText = fs.readFileSync('infrastructure/${{ matrix.environment }}/tfplan.txt', 'utf8');
+              const MAX = 60000;
+              if (planText.length > MAX) {
+                planText = planText.slice(0, MAX) + '\n\n... (truncated, see the full plan in the workflow run logs)';
+              }
+              body = `${marker}\n${runIdMarker}\n### Terraform Plan (${environment})\n\`\`\`\n${planText}\n\`\`\`\n\nThis plan will be applied automatically, unmodified, once this PR is merged to \`main\`.`;
+            } else {
+              body = `${marker}\n${runIdMarker}\n### Terraform Plan (${environment})\n:x: \`terraform plan\` failed. See the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`;
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Summary (workflow_dispatch runs)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Plan run ID for this run: **${{ github.run_id }}**" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Use this run ID with terraform-apply.yml's manual trigger to apply it." >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Fail If Plan Errored
+        if: steps.plan.outputs.exitcode == '1'
+        run: exit 1

@@ -1,0 +1,29 @@
+# Set by scripts/init-service.sh. CI refuses to plan while CHANGE_ME remains.
+project_name = "CHANGE_ME"
+aws_region   = "CHANGE_ME"
+
+service_name = "CHANGE_ME"
+service_type = "web"
+tier         = "private"
+
+# The host port. Services share a host on the shared fleet, so it must be unique
+# on the tier (the port registry enforces that). 1024-65535.
+service_port = 0 # CHANGE_ME
+
+# postgres, mysql, or leave null for a service without a database.
+database_engine = "postgres"
+
+# Application secrets to generate. The Django blueprint expects django_secret_key.
+generated_secret_names = ["django_secret_key"]
+
+################################################################################
+# THE SERVICE'S OWN HOSTS
+################################################################################
+
+min_size         = 2
+desired_capacity = 2
+max_size         = 4
+
+# At least one host is always on demand; the rest are spot.
+on_demand_base_capacity                  = 1
+on_demand_percentage_above_base_capacity = 0

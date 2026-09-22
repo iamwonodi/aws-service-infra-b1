@@ -1,0 +1,309 @@
+name: Terraform Apply
+
+# Applies the exact plan that was reviewed on the pull request, unmodified, when
+# it is merged to main: the plan artifact is downloaded from the run that produced
+# it and applied as-is. Nothing is re-planned, so what runs is what was read.
+#
+# After a successful apply the service's port is claimed in the registry (if one
+# is configured), so an abandoned pull request never holds a port.
+#
+# Runs under the <environment> GitHub Environment, which is where required
+# reviewers and the "main only" deployment rule live.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infrastructure/**"
+      - "modules/**"
+      - ".terraform-version"
+      - ".github/environments.json"
+
+  workflow_dispatch:
+    inputs:
+      plan_run_id:
+        description: "GitHub Actions run ID containing the approved Terraform plan"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+
+  # ============================================================================
+  # RESOLVE WHICH PLAN RUN TO APPLY
+  # ============================================================================
+
+  resolve-run:
+    name: Resolve Plan Run
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.resolve.outputs.run_id }}
+    steps:
+      - name: Resolve Run ID
+        id: resolve
+        uses: actions/github-script@v9
+        env:
+          MANUAL_RUN_ID: ${{ github.event.inputs.plan_run_id }}
+        with:
+          script: |
+            const manualRunId = process.env.MANUAL_RUN_ID;
+            if (manualRunId && !/^\d+$/.test(manualRunId)) {
+              core.setFailed(`plan_run_id must be a run ID (digits only), got: ${manualRunId}`);
+              return;
+            }
+            if (manualRunId) {
+              core.setOutput('run_id', manualRunId);
+              console.log(`Using manually supplied plan run ID: ${manualRunId}`);
+              return;
+            }
+
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+            });
+
+            if (prs.length === 0) {
+              core.setFailed(
+                `No pull request found associated with commit ${context.sha}. ` +
+                `Re-run this workflow manually via workflow_dispatch with the correct plan_run_id.`
+              );
+              return;
+            }
+
+            const pr = prs.find(p => p.merged_at !== null) || prs[0];
+
+            // Reads the run ID back out of terraform-plan.yml's own sticky
+            // PR comment, rather than querying the Workflow Runs API by
+            // head_sha. All of a PR's environment-specific plan comments
+            // share the same run ID (they come from matrix jobs within one
+            // workflow run), so finding any one of them is enough.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+            });
+
+            const planComment = comments.find(c =>
+              /<!-- terraform-plan-(development|staging|production) -->/.test(c.body)
+            );
+
+            if (!planComment) {
+              core.setFailed(
+                `No terraform-plan.yml comment found on PR #${pr.number}. ` +
+                `Was terraform-plan.yml ever run for this PR?`
+              );
+              return;
+            }
+
+            const match = planComment.body.match(/<!-- run-id: (\d+) -->/);
+
+            if (!match) {
+              core.setFailed(
+                `Found a plan comment on PR #${pr.number} but could not parse its run-id marker.`
+              );
+              return;
+            }
+
+            core.setOutput('run_id', match[1]);
+            console.log(`Resolved PR #${pr.number} -> terraform-plan.yml run ${match[1]} (via PR comment)`);
+
+  # ============================================================================
+  # DISCOVER WHICH ENVIRONMENT(S) THAT RUN COVERS
+  # ============================================================================
+
+  discover-environments:
+    name: Discover Planned Environments
+    needs: resolve-run
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.discover.outputs.environments }}
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Make CI Scripts Executable
+        run: chmod +x scripts/ci/*.sh
+
+      - name: Download All Plan Artifacts For This Run
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.resolve-run.outputs.run_id }}
+          pattern: "tfplan-*-${{ needs.resolve-run.outputs.run_id }}"
+          path: /tmp/plan-artifacts
+
+      - name: Discover Environments
+        id: discover
+        run: |
+          ENVIRONMENTS="$(scripts/ci/discover-environments-from-artifacts.sh /tmp/plan-artifacts)"
+          echo "environments=${ENVIRONMENTS}" >> "${GITHUB_OUTPUT}"
+          echo "Plan run ${{ needs.resolve-run.outputs.run_id }} covers: ${ENVIRONMENTS}"
+
+  # ============================================================================
+  # APPLY (ONE JOB PER PLANNED ENVIRONMENT)
+  # ============================================================================
+
+  apply:
+    name: Apply (${{ matrix.environment }})
+    needs: [resolve-run, discover-environments]
+    runs-on: ubuntu-latest
+
+    # Job-level permissions REPLACE the workflow-level block, so actions: read
+    # must be repeated: downloading an artifact from a different run needs it.
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJson(needs.discover-environments.outputs.environments) }}
+
+    environment: ${{ matrix.environment }}
+
+    concurrency:
+      group: terraform-apply-${{ matrix.environment }}
+      cancel-in-progress: false
+
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Download This Environment's Plan
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.resolve-run.outputs.run_id }}
+          name: tfplan-${{ matrix.environment }}-${{ needs.resolve-run.outputs.run_id }}
+          path: /tmp/plan-bundle
+
+      - name: Read Deployment Metadata
+        run: bash scripts/ci/read-deployment-metadata.sh /tmp/plan-bundle/deployment-metadata.json >> "${GITHUB_ENV}"
+
+      - name: Verify Metadata Matches This Job
+        run: |
+          if [[ "${ENVIRONMENT}" != "${{ matrix.environment }}" ]]; then
+            echo "ERROR: Plan metadata says environment '${ENVIRONMENT}', but this job is applying '${{ matrix.environment }}'." >&2
+            exit 1
+          fi
+
+      - name: Checkout Infrastructure At Pinned Commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.INFRASTRUCTURE_SHA }}
+
+      - name: Read Terraform Version
+        run: echo "TF_VERSION=$(tr -d '[:space:]' < .terraform-version)" >> "${GITHUB_ENV}"
+
+      - name: Read Service Identity
+        run: bash scripts/ci/read-service-info.sh infrastructure/${{ matrix.environment }} >> "${GITHUB_ENV}"
+
+      - name: Place Plan File
+        run: cp /tmp/plan-bundle/tfplan infrastructure/${{ matrix.environment }}/tfplan
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.TF_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform -chdir=infrastructure/${{ matrix.environment }} init -input=false -lockfile=readonly
+
+      - name: Terraform Validate
+        run: terraform -chdir=infrastructure/${{ matrix.environment }} validate
+
+      - name: Terraform Apply
+        run: terraform -chdir=infrastructure/${{ matrix.environment }} apply -input=false tfplan
+
+      # The service's database and user, created on the database host by core's own
+      # provisioning script. Runs on every apply: core's provisioning is
+      # conditional throughout, so it is harmless to repeat, and a rotated secret
+      # heals itself. A service without a database has no provisioning document
+      # and this is skipped.
+      # The service's database and user. The platform publishes exactly one way to
+      # create them: an SSM document on the EC2 database host (development), or a
+      # Lambda inside the VPC on a managed database (staging, production). Both are
+      # conditional throughout, so running on every apply is harmless, and a
+      # rotated secret heals itself. A service without a database has neither.
+      - name: Read Provisioning Target
+        id: provisioning
+        run: |
+          read_output() {
+            local value
+            value="$(terraform -chdir=infrastructure/${{ matrix.environment }} output -raw "$1" 2>/dev/null || true)"
+            [[ "${value}" == "null" ]] && value=""
+            echo "${value}"
+          }
+
+          DOCUMENT="$(read_output provision_document)"
+          FUNCTION="$(read_output provision_function)"
+
+          echo "document=${DOCUMENT}" >> "${GITHUB_OUTPUT}"
+          echo "function=${FUNCTION}" >> "${GITHUB_OUTPUT}"
+
+          if [[ -z "${DOCUMENT}${FUNCTION}" ]]; then
+            echo "This service has no database to provision."
+          fi
+
+      - name: Provision The Database (EC2 host)
+        if: steps.provisioning.outputs.document != ''
+        run: |
+          bash scripts/ci/provision-database.sh \
+            "${{ steps.provisioning.outputs.document }}" \
+            "${PROJECT_NAME}" \
+            "${SERVICE_NAME}" \
+            "${{ vars.AWS_REGION }}"
+
+      - name: Provision The Database (managed)
+        if: steps.provisioning.outputs.function != ''
+        run: |
+          bash scripts/ci/invoke-provisioning.sh \
+            "${{ steps.provisioning.outputs.function }}" \
+            "${SERVICE_NAME}" \
+            "${{ vars.AWS_REGION }}"
+
+      # The claim is made only now that the change is real. It re-checks the rules
+      # itself, so two services applying at once cannot both take the same port.
+      - name: Checkout Port Registry
+        if: vars.PORT_REGISTRY_REPOSITORY != ''
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.PORT_REGISTRY_REPOSITORY }}
+          token: ${{ secrets.PORT_REGISTRY_TOKEN }}
+          path: registry
+
+      - name: Claim Port In Registry
+        if: vars.PORT_REGISTRY_REPOSITORY != ''
+        run: |
+          bash scripts/ci/port-registry.sh claim \
+            --registry-dir registry \
+            --environment "${{ matrix.environment }}" \
+            --tier "${SERVICE_TIER}" \
+            --service "${SERVICE_NAME}" \
+            --type "${SERVICE_TYPE}" \
+            --port "${SERVICE_PORT}" \
+            --repo "${{ github.repository }}"
+
+      - name: Summary
+        run: |
+          {
+            echo "Applied plan run ${{ needs.resolve-run.outputs.run_id }} to **${{ matrix.environment }}**."
+            echo "Infrastructure commit: \`${INFRASTRUCTURE_SHA}\`"
+            echo "Service: \`${SERVICE_NAME}\` on port ${SERVICE_PORT} (${SERVICE_TIER} tier)"
+          } >> "${GITHUB_STEP_SUMMARY}"
