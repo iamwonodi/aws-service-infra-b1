@@ -473,3 +473,17 @@ run "a_name_matching_an_administrator_secret_is_refused" {
 
   expect_failures = [var.service_name]
 }
+
+run "a_managed_mongodb_service_uses_the_documentdb_cluster" {
+  command = plan
+
+  variables {
+    database_engine = "mongodb"
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"mongodb\":{\"host\":\"core-production-mongodb.cluster-x.docdb.amazonaws.com\",\"port\":27017,\"provision_function\":\"core-production-mongodb-provision\"}}}}"
+  }
+
+  assert {
+    condition     = jsondecode(output.config_json).database.host == "core-production-mongodb.cluster-x.docdb.amazonaws.com" && jsondecode(output.config_json).database.port == 27017 && output.provision_function == "core-production-mongodb-provision"
+    error_message = "a mongodb service connects to, and is provisioned by, the DocumentDB cluster"
+  }
+}

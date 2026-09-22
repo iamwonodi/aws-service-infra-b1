@@ -47,6 +47,7 @@ It is the **only** thing that passes from this repository to the application rep
 | `secret.arn` | fill `__APP_SECRET_ARN__` in `.env` |
 | `database.host` | reach the database: the EC2 database host in development, the engine's own managed instance in staging and production |
 | `database.port`, `database.port_parameter` | the port. Exactly one is set: `port` on a managed database (staging, production), where the contract publishes it; `port_parameter` on the EC2 host (development), where the platforms team publishes each engine's port, so read it from SSM at deploy time |
+| (MongoDB) | the user lives in the `admin` database in every environment (DocumentDB keeps all users there), so connect with `authSource=admin`; staging and production also need TLS and `retryWrites=false` |
 
 `database` is `null` for a service without one. `database.port` was added in schema version 1 without a bump: in a `dedicated` environment `port_parameter` named a parameter that never existed, so no working reader depended on it. In a `dedicated` environment `deploy` differs (each service has its own bucket); this version does not host those.
 
