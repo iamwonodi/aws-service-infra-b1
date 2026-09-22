@@ -18,7 +18,7 @@ The platform (core) must already be running in the environment, so that `/<proje
 scripts/init-service.sh --project acme --service auth --region eu-west-1 --port 1024
 ```
 
-Options: `--type web`, `--tier private|internal`, `--database postgres|mysql|none`, `--reviewers`. Preview with `--dry-run`. It writes `terraform.tfvars` and `backend.tf`, and creates the `development` and `development-plan` GitHub Environments here.
+Options: `--type web`, `--tier private|internal`, `--database postgres|mysql|mongodb|none` (every environment the service deploys to must run that engine; see below), `--reviewers`. Preview with `--dry-run`. It writes `terraform.tfvars` and `backend.tf`, and creates the `development` and `development-plan` GitHub Environments here.
 
 - `--service` must match the name core knows the service by (the `service_name` in core's `service-roles.json`), and `--project` the project core was set up with.
 - `--port` is the host port. Services share a host, so it must be unique on the tier.

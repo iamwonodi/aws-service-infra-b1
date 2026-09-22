@@ -23,6 +23,14 @@ variable "service_name" {
     condition     = !contains(["database", "database-hub", "fleet", "internal", "platform", "private", "services"], var.service_name)
     error_message = "service_name must not be one of the names the platform itself uses: database, database-hub, fleet, internal, platform, private, services."
   }
+
+  # Service secrets are scoped by name prefix, <project>-<service>-<environment>*.
+  # Core names each database administrator secret <project>-database-admin-<engine>-...,
+  # so a service called database-admin-<engine> would match its prefix.
+  validation {
+    condition     = !startswith(var.service_name, "database-admin")
+    error_message = "service_name must not begin with database-admin: core's database administrator secrets are named that way."
+  }
 }
 
 variable "service_type" {
@@ -58,11 +66,11 @@ variable "service_port" {
 variable "database_engine" {
   type        = string
   default     = null
-  description = "The database engine the service uses (postgres or mysql), or null for none."
+  description = "The database engine the service uses (postgres, mysql or mongodb), or null for none. The environment must run it: development runs what the database engines repository activates, staging and production what core lists in their database_engines."
 
   validation {
-    condition     = var.database_engine == null || contains(["postgres", "mysql"], coalesce(var.database_engine, "x"))
-    error_message = "database_engine must be \"postgres\", \"mysql\" or null."
+    condition     = var.database_engine == null || contains(["postgres", "mysql", "mongodb"], coalesce(var.database_engine, "x"))
+    error_message = "database_engine must be \"postgres\", \"mysql\", \"mongodb\" or null."
   }
 }
 

@@ -27,7 +27,7 @@ set -euo pipefail
 #
 # Usage:
 #   scripts/init-service.sh --project NAME --service NAME --region REGION --port N \
-#       [--type web] [--tier private|internal] [--database postgres|mysql|none] \
+#       [--type web] [--tier private|internal] [--database postgres|mysql|mongodb|none] \
 #       [--reviewers login1,login2] [--repo OWNER/REPO] [--skip-github] [--dry-run]
 #
 #   --project   the project core was set up with (bucket names derive from it)
@@ -74,12 +74,17 @@ errors=()
 case "${SERVICE}" in
   database|database-hub|fleet|internal|platform|private|services)
     errors+=("--service '${SERVICE}' is a name the platform itself uses; choose another.") ;;
+  database-admin*)
+    errors+=("--service must not begin with database-admin: core's database administrator secrets are named that way.") ;;
 esac
 [[ "${REGION}" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]$ ]] || errors+=("--region must look like af-south-1.")
 [[ "${PORT}" =~ ^[0-9]+$ && "${PORT}" -ge 1024 && "${PORT}" -le 65535 ]] || errors+=("--port must be a whole number from 1024 to 65535.")
 [[ "${TYPE}" =~ ^[a-z][a-z0-9-]{0,15}$ ]] || errors+=("--type must be 1-16 lowercase letters, digits or hyphens.")
 [[ "${TIER}" == "private" || "${TIER}" == "internal" ]] || errors+=("--tier must be private or internal.")
-[[ "${DATABASE}" == "postgres" || "${DATABASE}" == "mysql" || "${DATABASE}" == "none" ]] || errors+=("--database must be postgres, mysql or none.")
+case "${DATABASE}" in
+  postgres|mysql|mongodb|none) ;;
+  *) errors+=("--database must be postgres, mysql, mongodb or none.") ;;
+esac
 if [[ -n "${REPO}" && ! "${REPO}" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then errors+=("--repo must be OWNER/REPOSITORY."); fi
 if [[ -n "${REVIEWERS}" && ! "${REVIEWERS}" =~ ^[A-Za-z0-9-]+(,[A-Za-z0-9-]+)*$ ]]; then errors+=("--reviewers must be comma-separated GitHub logins."); fi
 

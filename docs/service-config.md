@@ -29,6 +29,7 @@ It is the **only** thing that passes from this repository to the application rep
   "database": {
     "engine": "postgres",
     "host": "db.dev.example.org",
+    "port": null,
     "port_parameter": "/acme/database/engines/postgres/port",
     "secret_fields": { "name": "db_name", "user": "db_user", "password": "db_password" }
   }
@@ -44,9 +45,10 @@ It is the **only** thing that passes from this repository to the application rep
 | `port` | fill `__PORT__` in the compose file |
 | `domain` | set the allowed host and CSRF origin |
 | `secret.arn` | fill `__APP_SECRET_ARN__` in `.env` |
-| `database.*` | reach the database. The **port** is not here: the platform team publishes each engine's port under `port_parameter`, so read it from there at deploy time |
+| `database.host` | reach the database: the EC2 database host in development, the engine's own managed instance in staging and production |
+| `database.port`, `database.port_parameter` | the port. Exactly one is set: `port` on a managed database (staging, production), where the contract publishes it; `port_parameter` on the EC2 host (development), where the platforms team publishes each engine's port, so read it from SSM at deploy time |
 
-`database` is `null` for a service without one. In a `dedicated` environment `deploy` differs (each service has its own bucket); this version does not host those.
+`database` is `null` for a service without one. `database.port` was added in schema version 1 without a bump: in a `dedicated` environment `port_parameter` named a parameter that never existed, so no working reader depended on it. In a `dedicated` environment `deploy` differs (each service has its own bucket); this version does not host those.
 
 ## Changing it
 

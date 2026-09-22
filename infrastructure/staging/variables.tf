@@ -41,7 +41,7 @@ variable "service_port" {
 variable "database_engine" {
   type        = string
   default     = null
-  description = "The database engine the service uses (postgres or mysql), or null for none."
+  description = "The database engine the service uses (postgres, mysql or mongodb), or null for none. The environment must run it."
 }
 
 variable "database_extra_sql_path" {

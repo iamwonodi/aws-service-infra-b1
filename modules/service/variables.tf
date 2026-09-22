@@ -31,7 +31,7 @@ variable "service_port" {
 variable "database_engine" {
   type        = string
   default     = null
-  description = "The database engine the service uses (postgres or mysql), or null for none. When set, the service's secret gets db_name, db_user and db_password fields."
+  description = "The database engine the service uses (postgres, mysql or mongodb), or null for none. When set, the service's secret gets db_name, db_user and db_password fields."
 }
 
 variable "health_check_path" {

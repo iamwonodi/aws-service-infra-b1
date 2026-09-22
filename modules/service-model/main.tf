@@ -54,19 +54,33 @@ locals {
   platform_prefix            = try(local.platform.compute.platform_prefix, "_platform")
   shared_deploy_bucket       = try(local.platform.buckets.deploy, null)
 
-  # The platforms team publishes each engine's allocated port here.
-  database_port_parameter = var.database_engine == null ? null : "/${var.project_name}/database/engines/${var.database_engine}/port"
+  # WHERE THE DATABASE IS depends on the hosting model:
+  #
+  #   shared      development. One EC2 database host runs every engine; the
+  #               platforms team publishes each engine's port as an SSM parameter,
+  #               which the application reads at deploy time.
+  #   dedicated   staging, production. Each ACTIVE engine is its own managed
+  #               instance, listed in the contract's database.engines with its
+  #               host, port and provisioning function. An engine the environment
+  #               does not run is simply absent, and the plan says so.
+  managed_databases = try(local.platform.database.engines, {})
+  managed_database  = var.database_engine == null ? null : try(local.managed_databases[var.database_engine], null)
 
-  # Provisioning: this repository publishes a request, then sends core's document
-  # to the database host, which creates the database and user from the secret.
-  # Null where the platform has no database host to provision on (a managed
-  # database has no container to run the provisioning in).
-  provision_document = var.database_engine == null ? null : try(local.platform.database.provision_document, null)
+  database_host = var.database_engine == null ? null : (
+    local.is_dedicated ? try(local.managed_database.host, null) : try(local.platform.database.host, null)
+  )
 
-  # On a MANAGED database there is no host to send a document to: core runs a
-  # Lambda inside the VPC instead, and this repository invokes it. The platform
-  # publishes exactly one of the two.
-  provision_function = var.database_engine == null ? null : try(local.platform.database.provision_function, null)
+  # The port itself where the contract publishes it (managed); otherwise the
+  # parameter the platforms team publishes it under.
+  database_port           = local.is_dedicated ? try(local.managed_database.port, null) : null
+  database_port_parameter = var.database_engine == null || local.is_dedicated ? null : "/${var.project_name}/database/engines/${var.database_engine}/port"
+
+  # Provisioning: on the EC2 host this repository publishes a request, then sends
+  # core's document to the host, which creates the database and user from the
+  # secret. A managed database has no container to run that in, so core runs a
+  # Lambda inside the VPC per engine, and this repository invokes that engine's.
+  provision_document = var.database_engine == null || local.is_dedicated ? null : try(local.platform.database.provision_document, null)
+  provision_function = var.database_engine == null || !local.is_dedicated ? null : try(local.managed_database.provision_function, null)
 
   provisioning_prefix = "provisioning/${var.service_name}"
 
@@ -118,8 +132,12 @@ locals {
     }
 
     database = var.database_engine == null ? null : {
-      engine         = var.database_engine
-      host           = try(local.platform.database.host, null)
+      engine = var.database_engine
+      host   = local.database_host
+
+      # Exactly one is set: port on a managed database, port_parameter on the EC2
+      # host (read from SSM at deploy time).
+      port           = local.database_port
       port_parameter = local.database_port_parameter
       secret_fields = {
         name     = "db_name"
@@ -198,8 +216,21 @@ resource "terraform_data" "model_invariants" {
     }
 
     precondition {
-      condition     = var.database_engine == null || try(local.platform.database.host, null) != null
+      condition     = var.database_engine == null || local.is_dedicated || try(local.platform.database.host, null) != null
       error_message = "database_engine is ${coalesce(var.database_engine, "unset")}, but the platform publishes no database host."
+    }
+
+    # A managed environment runs only the engines core lists for it, each billed
+    # while it runs. Failing here names the fix instead of deploying a service
+    # that could never reach its database.
+    precondition {
+      condition     = var.database_engine == null || !local.is_dedicated || local.managed_database != null
+      error_message = "database_engine is ${coalesce(var.database_engine, "unset")}, but ${var.environment} runs ${length(local.managed_databases) == 0 ? "no database engine" : "only: ${join(", ", sort(keys(local.managed_databases)))}"}. Add it to database_engines in core's infrastructure/${var.environment}/terraform.tfvars (scripts/init-project.sh --${var.environment}-engines), or use an engine this environment runs."
+    }
+
+    precondition {
+      condition     = local.managed_database == null || (try(local.managed_database.host, null) != null && try(local.managed_database.port, null) != null)
+      error_message = "The platform lists ${coalesce(var.database_engine, "unset")} for ${var.environment} without a host or port."
     }
   }
 }

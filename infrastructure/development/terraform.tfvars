@@ -10,7 +10,10 @@ tier         = "private"
 # on the tier (the port registry enforces that). 1024-65535.
 service_port = 0 # CHANGE_ME
 
-# postgres, mysql, or leave null for a service without a database.
+# postgres, mysql or mongodb, or null for a service without a database. The
+# environment must run it: development runs what the database engines repository
+# activates; staging and production what core lists in their database_engines
+# (mongodb is not available there until core's DocumentDB module exists).
 database_engine = "postgres"
 
 # Application secrets to generate. The Django blueprint expects django_secret_key.

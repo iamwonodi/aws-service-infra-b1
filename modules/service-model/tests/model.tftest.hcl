@@ -194,7 +194,13 @@ run "a_dedicated_environment_builds_the_services_own_hosts" {
         "service_boundary_arn": "arn:aws:iam::123456789012:policy/platform/core-service-boundary",
         "compute": { "ami_parameter": "/core/platform/ami/ubuntu", "scripts_manifest_parameter": "/core/platform/scripts-manifest", "platform_prefix": "_platform" },
         "buckets": { "deploy": "core-production-deploy", "assets": "core-production-assets" },
-        "database": { "host": "db.example.org", "provision_function": "core-production-postgres-provision" },
+        "database": {
+          "host": "core-production-postgres.x.af-south-1.rds.amazonaws.com", "provision_function": "core-production-postgres-provision",
+          "engines": {
+            "postgres": { "host": "core-production-postgres.x.af-south-1.rds.amazonaws.com", "port": 5432, "provision_function": "core-production-postgres-provision" },
+            "mysql":    { "host": "core-production-mysql.x.af-south-1.rds.amazonaws.com", "port": 3306, "provision_function": "core-production-mysql-provision" }
+          }
+        },
         "tiers": { "private": { "listener_arn": "arn:l", "alb_security_group_id": "sg-0alb", "subnet_ids": ["subnet-0a", "subnet-0b"] } }
       }
     JSON
@@ -219,6 +225,13 @@ run "a_dedicated_environment_builds_the_services_own_hosts" {
   assert {
     condition     = output.provision_function == "core-production-postgres-provision" && output.provision_document == null
     error_message = "a managed database is provisioned by invoking core's function, not by sending a document"
+  }
+
+  # The engine's own instance and port, published directly: there is no port
+  # parameter outside development.
+  assert {
+    condition     = jsondecode(output.config_json).database.host == "core-production-postgres.x.af-south-1.rds.amazonaws.com" && jsondecode(output.config_json).database.port == 5432 && jsondecode(output.config_json).database.port_parameter == null && output.database_port_parameter == null
+    error_message = "on a managed database the app connects to its engine's instance on the published port"
   }
 
   assert {
@@ -367,8 +380,96 @@ run "an_unsupported_database_engine_is_refused" {
   command = plan
 
   variables {
-    database_engine = "mongodb"
+    database_engine = "redis"
   }
 
   expect_failures = [var.database_engine]
+}
+
+run "development_can_use_mongodb_on_the_database_host" {
+  command = plan
+
+  variables {
+    database_engine = "mongodb"
+  }
+
+  assert {
+    condition     = jsondecode(output.config_json).database.port_parameter == "/core/database/engines/mongodb/port" && jsondecode(output.config_json).database.port == null && output.provision_document == "core-database-provision"
+    error_message = "on the EC2 host the port comes from the platforms team's parameter and provisioning is the host's document"
+  }
+
+  assert {
+    condition     = jsondecode(output.provisioning_request_json).database_engine == "mongodb"
+    error_message = "the host provisions the engine the service names"
+  }
+}
+
+run "a_managed_service_uses_its_own_engines_instance" {
+  command = plan
+
+  variables {
+    database_engine = "mysql"
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"postgres\":{\"host\":\"pg.rds\",\"port\":5432,\"provision_function\":\"core-production-postgres-provision\"},\"mysql\":{\"host\":\"my.rds\",\"port\":3306,\"provision_function\":\"core-production-mysql-provision\"}}}}"
+  }
+
+  assert {
+    condition     = jsondecode(output.config_json).database.host == "my.rds" && jsondecode(output.config_json).database.port == 3306 && output.provision_function == "core-production-mysql-provision"
+    error_message = "a mysql service connects to, and is provisioned by, the mysql instance -- not postgres"
+  }
+}
+
+run "an_engine_the_managed_environment_does_not_run_is_refused" {
+  command = plan
+
+  variables {
+    database_engine = "mysql"
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"postgres\":{\"host\":\"pg.rds\",\"port\":5432,\"provision_function\":\"f\"}}}}"
+  }
+
+  expect_failures = [terraform_data.model_invariants]
+}
+
+run "mongodb_is_refused_where_no_managed_mongodb_runs" {
+  command = plan
+
+  variables {
+    database_engine = "mongodb"
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"postgres\":{\"host\":\"pg.rds\",\"port\":5432,\"provision_function\":\"f\"}}}}"
+  }
+
+  expect_failures = [terraform_data.model_invariants]
+}
+
+run "a_managed_environment_running_no_engine_is_refused" {
+  command = plan
+
+  variables {
+    platform_json = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"host\":null,\"provision_function\":null,\"engines\":{}}}"
+  }
+
+  expect_failures = [terraform_data.model_invariants]
+}
+
+run "a_service_without_a_database_needs_no_engine" {
+  command = plan
+
+  variables {
+    database_engine = null
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{}}}"
+  }
+
+  assert {
+    condition     = jsondecode(output.config_json).database == null && output.provision_function == null
+    error_message = "a service with no database is unaffected by which engines run"
+  }
+}
+
+run "a_name_matching_an_administrator_secret_is_refused" {
+  command = plan
+
+  variables {
+    service_name = "database-admin-pg"
+  }
+
+  expect_failures = [var.service_name]
 }

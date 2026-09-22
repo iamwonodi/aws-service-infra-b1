@@ -41,6 +41,8 @@ check "--tier, --type honoured"                          bash -c "[ \"$(val deve
 check "--database none writes null"                      test "$(raw development database_engine terraform.tfvars)" = null
 run --database mysql >/dev/null 2>&1
 check "switching back to an engine replaces null"        test "$(val development database_engine terraform.tfvars)" = mysql
+run --database mongodb >/dev/null 2>&1
+check "mongodb is accepted (development runs it on the host)" test "$(val development database_engine terraform.tfvars)" = mongodb
 fresh; run --project other >/dev/null 2>&1
 check "re-running with a new project updates the files"  test "$(val development project_name terraform.tfvars)" = other
 
@@ -81,7 +83,8 @@ check "bad region"                                       bad --project acme --se
 check "privileged port"                                  bad --project acme --service auth --region eu-west-1 --port 80
 check "missing port"                                     bad --project acme --service auth --region eu-west-1
 check "bad tier"                                         bad --project acme --service auth --region eu-west-1 --port 1234 --tier edge
-check "bad database"                                     bad --project acme --service auth --region eu-west-1 --port 1234 --database mongodb
+check "bad database"                                     bad --project acme --service auth --region eu-west-1 --port 1234 --database redis
+check "a name matching an administrator secret"          bad --project acme --service database-admin-postgres --region eu-west-1 --port 1234
 check "bad reviewers"                                    bad --project acme --service auth --region eu-west-1 --port 1234 --reviewers 'a b'
 check "unknown option"                                   bad --project acme --service auth --region eu-west-1 --port 1234 --bogus
 fresh; FAKE_GH_NO_USER=1 bash "${INIT}" "${ARGS[@]}" >/dev/null 2>&1

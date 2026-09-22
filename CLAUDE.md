@@ -30,9 +30,8 @@ bash scripts/ci/tests/run-all.sh
 ## Open items
 
 - Dedicated hosting (staging, production) is built in `modules/service-hosting` but has never run. Watch the first apply for: the boundary refusing an action the hosts need, the launch template module's `block_device_mappings` shape, and the boot script's `jq` being present on the image.
-- Provisioning works against the EC2 database host only (`provision-database.sh`, after the apply). A managed database has no container to run core's provisioning script in; a service that declares a database in such an environment fails the plan.
+- Provisioning runs after the apply: on the EC2 database host by core's document (`provision-database.sh`, development), on a managed database by invoking that engine's function from the contract's `database.engines` (`invoke-provisioning.sh`, staging and production). A service whose engine the environment does not run fails the plan, naming the fix in core.
 - Nothing here has been planned or applied against real AWS. `modules/service` composes modules whose behaviour offline tests cannot prove.
-- `.terraform.lock.hcl` is not committed yet (it needs registry access to generate).
 - Every `infrastructure/<env>/.terraform.lock.hcl` is committed, locked for every platform (`terraform providers lock -platform=windows_amd64 -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64`). CI fails without it, and every environment init is `-lockfile=readonly`: after adding a provider or a module that brings one, re-lock and commit before pushing.
 - Names: `<project>-<environment>-<service>-<resource>`. The secret and the target group are the one exception (`<project>-<service>-<environment>-...`, from `secrets-vault` and `target-group` v1), kept behind `service_first_name` in `service-model` and `secret_prefix` in `service-hosting`. Hosting models are `shared` and `dedicated`. Say **port registry** or **ECR registry**, never "the registry".
 

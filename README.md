@@ -1,6 +1,6 @@
 # Service infrastructure blueprint
 
-The Terraform for **one service** on the platform that [core](https://github.com/iamwonodi/audit) runs: its image repository, secret, target group, load balancer rule, and the connection to the shared fleet. It is one half of a service. The other half is the **application repository** (for example the Django blueprint), which builds the image and deploys it.
+The Terraform for **one service** on the platform that [core](https://github.com/iamwonodi/aws-core-infra-b1) runs: its image repository, secret, target group, load balancer rule, and the connection to the shared fleet. It is one half of a service. The other half is the **application repository** (for example the Django blueprint), which builds the image and deploys it.
 
 ```text
    this repository                        the application repository

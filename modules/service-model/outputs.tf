@@ -40,7 +40,7 @@ output "database_identifier" {
 }
 
 output "database_port_parameter" {
-  description = "SSM parameter holding the database engine's port, or null without a database."
+  description = "SSM parameter holding the database engine's port on the EC2 host. Null without a database, and on a managed database, whose port the contract publishes directly."
   value       = local.database_port_parameter
 }
 
