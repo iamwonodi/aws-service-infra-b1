@@ -180,7 +180,7 @@ resource "terraform_data" "model_invariants" {
 
     precondition {
       condition     = local.tier != null
-      error_message = "The platform offers no tier \"${var.tier}\" in this environment. Available: ${join(", ", keys(try(local.platform.tiers, {})))}."
+      error_message = "The platform offers no tier \"${var.tier}\" in this environment. Available: ${join(", ", keys(try(local.platform.tiers, {})))}.${var.tier == "internal" ? " Core runs the internal tier only while internal_tier_enabled is on in that environment's terraform.tfvars." : ""}"
     }
 
     # A shared fleet needs the tier's own group and ASG to attach to; dedicated
