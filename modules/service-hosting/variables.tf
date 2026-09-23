@@ -64,6 +64,16 @@ variable "alb_security_group_id" {
   description = "The tier's load balancer. It is the only thing allowed to reach the service's port."
 }
 
+variable "tier_security_group_id" {
+  type        = string
+  description = "The tier's own security group. The hosts wear it beside their own, because the databases and the Secrets Manager endpoint admit it. It has no inbound rules, so it opens nothing on the hosts."
+
+  validation {
+    condition     = trimspace(var.tier_security_group_id) != ""
+    error_message = "tier_security_group_id must not be empty."
+  }
+}
+
 variable "ecr_registry_url" {
   type        = string
   description = "Registry the hosts pull the service's image from."

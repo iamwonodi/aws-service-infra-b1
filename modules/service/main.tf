@@ -289,8 +289,9 @@ module "hosting" {
 
   vpc_id = module.model.platform.vpc_id
   # Where the tier's hosts go, as the platform publishes it: nothing hard-coded.
-  subnet_ids            = module.model.tier.subnet_ids
-  alb_security_group_id = module.model.tier.alb_security_group_id
+  subnet_ids             = module.model.tier.subnet_ids
+  alb_security_group_id  = module.model.tier.alb_security_group_id
+  tier_security_group_id = module.model.tier.security_group_id
 
   ecr_registry_url = module.model.platform.ecr_registry_url
   aws_region       = module.model.platform.region

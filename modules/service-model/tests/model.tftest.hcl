@@ -201,7 +201,7 @@ run "a_dedicated_environment_builds_the_services_own_hosts" {
             "mysql":    { "host": "core-production-mysql.x.af-south-1.rds.amazonaws.com", "port": 3306, "provision_function": "core-production-mysql-provision" }
           }
         },
-        "tiers": { "private": { "listener_arn": "arn:l", "alb_security_group_id": "sg-0alb", "subnet_ids": ["subnet-0a", "subnet-0b"] } }
+        "tiers": { "private": { "listener_arn": "arn:l", "alb_security_group_id": "sg-0alb", "security_group_id": "sg-0priv", "subnet_ids": ["subnet-0a", "subnet-0b"] } }
       }
     JSON
   }
@@ -240,6 +240,11 @@ run "a_dedicated_environment_builds_the_services_own_hosts" {
   }
 
   assert {
+    condition     = output.tier.security_group_id == "sg-0priv"
+    error_message = "the service's hosts wear the tier's security group, which the databases and the Secrets Manager endpoint admit"
+  }
+
+  assert {
     condition     = output.service_boundary_arn == "arn:aws:iam::123456789012:policy/platform/core-service-boundary"
     error_message = "every role this repository creates must carry the platform's boundary"
   }
@@ -249,7 +254,7 @@ run "a_dedicated_environment_without_an_image_is_refused" {
   command = plan
 
   variables {
-    platform_json = "{\"schema_version\":1,\"domain_name\":\"x.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}}}"
+    platform_json = "{\"schema_version\":1,\"domain_name\":\"x.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"security_group_id\":\"g\",\"subnet_ids\":[\"a\",\"b\"]}}}"
   }
 
   expect_failures = [terraform_data.model_invariants]
@@ -269,7 +274,21 @@ run "a_dedicated_tier_without_subnets_is_refused" {
   command = plan
 
   variables {
-    platform_json = "{\"schema_version\":1,\"domain_name\":\"x.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\"}}}"
+    database_engine = null
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"x.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"security_group_id\":\"g\"}}}"
+  }
+
+  expect_failures = [terraform_data.model_invariants]
+}
+
+# Without the tier's group, dedicated hosts could reach neither their database
+# nor Secrets Manager: both admit the tier's group, not the service's own.
+run "a_dedicated_tier_without_its_security_group_is_refused" {
+  command = plan
+
+  variables {
+    database_engine = null
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"x.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}}}"
   }
 
   expect_failures = [terraform_data.model_invariants]
@@ -409,7 +428,7 @@ run "a_managed_service_uses_its_own_engines_instance" {
 
   variables {
     database_engine = "mysql"
-    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"postgres\":{\"host\":\"pg.rds\",\"port\":5432,\"provision_function\":\"core-production-postgres-provision\"},\"mysql\":{\"host\":\"my.rds\",\"port\":3306,\"provision_function\":\"core-production-mysql-provision\"}}}}"
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"security_group_id\":\"g\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"postgres\":{\"host\":\"pg.rds\",\"port\":5432,\"provision_function\":\"core-production-postgres-provision\"},\"mysql\":{\"host\":\"my.rds\",\"port\":3306,\"provision_function\":\"core-production-mysql-provision\"}}}}"
   }
 
   assert {
@@ -423,7 +442,7 @@ run "an_engine_the_managed_environment_does_not_run_is_refused" {
 
   variables {
     database_engine = "mysql"
-    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"postgres\":{\"host\":\"pg.rds\",\"port\":5432,\"provision_function\":\"f\"}}}}"
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"security_group_id\":\"g\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"postgres\":{\"host\":\"pg.rds\",\"port\":5432,\"provision_function\":\"f\"}}}}"
   }
 
   expect_failures = [terraform_data.model_invariants]
@@ -434,7 +453,7 @@ run "mongodb_is_refused_where_no_managed_mongodb_runs" {
 
   variables {
     database_engine = "mongodb"
-    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"postgres\":{\"host\":\"pg.rds\",\"port\":5432,\"provision_function\":\"f\"}}}}"
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"security_group_id\":\"g\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"postgres\":{\"host\":\"pg.rds\",\"port\":5432,\"provision_function\":\"f\"}}}}"
   }
 
   expect_failures = [terraform_data.model_invariants]
@@ -444,7 +463,7 @@ run "a_managed_environment_running_no_engine_is_refused" {
   command = plan
 
   variables {
-    platform_json = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"host\":null,\"provision_function\":null,\"engines\":{}}}"
+    platform_json = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"security_group_id\":\"g\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"host\":null,\"provision_function\":null,\"engines\":{}}}"
   }
 
   expect_failures = [terraform_data.model_invariants]
@@ -455,7 +474,7 @@ run "a_service_without_a_database_needs_no_engine" {
 
   variables {
     database_engine = null
-    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{}}}"
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"security_group_id\":\"g\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{}}}"
   }
 
   assert {
@@ -479,7 +498,7 @@ run "a_managed_mongodb_service_uses_the_documentdb_cluster" {
 
   variables {
     database_engine = "mongodb"
-    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"mongodb\":{\"host\":\"core-production-mongodb.cluster-x.docdb.amazonaws.com\",\"port\":27017,\"provision_function\":\"core-production-mongodb-provision\"}}}}"
+    platform_json   = "{\"schema_version\":1,\"domain_name\":\"example.org\",\"hosting_model\":\"dedicated\",\"service_boundary_arn\":\"arn:b\",\"compute\":{\"ami_parameter\":\"/a\",\"scripts_manifest_parameter\":\"/m\"},\"buckets\":{\"deploy\":\"d\",\"assets\":\"a\"},\"tiers\":{\"private\":{\"listener_arn\":\"l\",\"alb_security_group_id\":\"s\",\"security_group_id\":\"g\",\"subnet_ids\":[\"a\",\"b\"]}},\"database\":{\"engines\":{\"mongodb\":{\"host\":\"core-production-mongodb.cluster-x.docdb.amazonaws.com\",\"port\":27017,\"provision_function\":\"core-production-mongodb-provision\"}}}}"
   }
 
   assert {

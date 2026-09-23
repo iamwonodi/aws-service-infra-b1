@@ -139,7 +139,11 @@ module "launch_template" {
 
   instance_type             = var.instance_types[0]
   iam_instance_profile_name = aws_iam_instance_profile.instance.name
-  security_group_ids        = [aws_security_group.instance.id]
+
+  # The service's own group admits its load balancer. The tier's group is what the
+  # databases and the Secrets Manager endpoint admit; without it the hosts could
+  # reach neither their database nor their secret.
+  security_group_ids = [aws_security_group.instance.id, var.tier_security_group_id]
 
   user_data = base64encode(local.user_data)
 

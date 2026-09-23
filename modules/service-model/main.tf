@@ -183,14 +183,16 @@ resource "terraform_data" "model_invariants" {
       error_message = "The platform offers no tier \"${var.tier}\" in this environment. Available: ${join(", ", keys(try(local.platform.tiers, {})))}.${var.tier == "internal" ? " Core runs the internal tier only while internal_tier_enabled is on in that environment's terraform.tfvars." : ""}"
     }
 
-    # A shared fleet needs the tier's own group and ASG to attach to; dedicated
-    # hosting needs only somewhere to put the load balancer rule.
+    # A shared fleet needs the tier's own group and ASG to attach to. Dedicated
+    # hosting needs the tier's subnets, and the tier's group for its own hosts to
+    # wear: the databases and the Secrets Manager endpoint admit that group, not
+    # the service's own.
     precondition {
       condition = local.tier != null && alltrue([
-        for key in local.is_dedicated ? ["listener_arn", "alb_security_group_id", "subnet_ids"] : ["listener_arn", "alb_security_group_id", "security_group_id", "asg_name"] :
+        for key in local.is_dedicated ? ["listener_arn", "alb_security_group_id", "security_group_id", "subnet_ids"] : ["listener_arn", "alb_security_group_id", "security_group_id", "asg_name"] :
         try(local.tier[key], null) != null
       ])
-      error_message = "The platform's ${var.tier} tier is missing something this hosting model needs: ${local.is_dedicated ? "listener_arn, alb_security_group_id or subnet_ids" : "listener_arn, alb_security_group_id, security_group_id or asg_name"}."
+      error_message = "The platform's ${var.tier} tier is missing something this hosting model needs: ${local.is_dedicated ? "listener_arn, alb_security_group_id, security_group_id or subnet_ids. A core published before dedicated hosts wore the tier's security group lacks security_group_id: update and apply core first" : "listener_arn, alb_security_group_id, security_group_id or asg_name"}."
     }
 
     precondition {

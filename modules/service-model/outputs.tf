@@ -6,7 +6,7 @@ output "platform" {
 }
 
 output "tier" {
-  description = "The platform's resources for the service's tier: listener_arn, alb_security_group_id, security_group_id, asg_name."
+  description = "The platform's resources for the service's tier: listener_arn, alb_security_group_id, security_group_id (the tier's own group), and asg_name (shared) or subnet_ids (dedicated)."
   value       = local.tier
 
   depends_on = [terraform_data.model_invariants]
