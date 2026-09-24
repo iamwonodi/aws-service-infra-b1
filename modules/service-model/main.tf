@@ -88,6 +88,16 @@ locals {
   # engine accepts unquoted.
   database_identifier = replace(var.service_name, "-", "_")
 
+  # The service's agents: logins <database identifier>.<name>, at most 32
+  # characters (MySQL's limit, which core holds on every engine).
+  agent_logins     = { for name, agent in var.agents : name => "${local.database_identifier}.${name}" }
+  agents_too_long  = [for name, login in local.agent_logins : login if length(login) > 32]
+  agent_name_limit = 32 - length(local.database_identifier) - 1
+
+  # Where the service declares its agents' emails to the front door. Null where
+  # the platform has none (production).
+  front_door_declaration_key = try(local.platform.team_front_door.declaration_prefix, null) == null ? null : "${local.platform.team_front_door.declaration_prefix}${var.service_name}.json"
+
   config = {
     schema_version = 1
 
@@ -168,6 +178,17 @@ locals {
 
 resource "terraform_data" "model_invariants" {
   lifecycle {
+    # Agents are logins on the service's database.
+    precondition {
+      condition     = length(var.agents) == 0 || var.database_engine != null
+      error_message = "agents.json lists agents, but the service has no database: an agent is a login on the service's database."
+    }
+
+    precondition {
+      condition     = length(local.agents_too_long) == 0
+      error_message = "These logins are longer than 32 characters, MySQL's limit: ${join(", ", local.agents_too_long)}. With this service's name an agent's name can be at most ${local.agent_name_limit} characters."
+    }
+
     precondition {
       condition     = try(local.platform.schema_version, null) == 1
       error_message = "This blueprint was written for platform contract version 1, but core publishes version ${try(local.platform.schema_version, "unknown")} at /${var.project_name}/platform/config."

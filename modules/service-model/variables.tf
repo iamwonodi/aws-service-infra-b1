@@ -26,13 +26,11 @@ variable "service_name" {
 
   # Service secrets are scoped by name prefix, <project>-<service>-<environment>*.
   # Core names its database secrets <project>-database-<something>-... (each
-  # engine's administrator, the people's passwords), so a service whose name
-  # begins database- could match one. A name beginning agent- would give the
-  # service the database user agent_<name>, which is a person's. Core refuses
-  # both too.
+  # engine's administrator, the platform list's passwords), so a service whose
+  # name begins database- could match one. Core refuses it too.
   validation {
-    condition     = !startswith(var.service_name, "database-") && !startswith(var.service_name, "agent-")
-    error_message = "service_name must not begin with database- (core's database secrets are named that way) or agent- (a person's database user is agent_<name>)."
+    condition     = !startswith(var.service_name, "database-")
+    error_message = "service_name must not begin with database-: core's database secrets are named that way."
   }
 }
 
@@ -74,6 +72,35 @@ variable "database_engine" {
   validation {
     condition     = var.database_engine == null || contains(["postgres", "mysql", "mongodb"], coalesce(var.database_engine, "x"))
     error_message = "database_engine must be \"postgres\", \"mysql\", \"mongodb\" or null."
+  }
+}
+
+variable "agents" {
+  type = map(object({
+    email  = string
+    access = string
+  }))
+  default     = {}
+  description = "The service team's own people, from infrastructure/<environment>/agents.json. Each gets a database login, <service>.<name> (the service's database name, a dot, the name), on this service's database only, with access \"read\" (look at and query data) or \"write\" (also add, change and delete rows); and, where the platform has a front door, a sign-in to the team tools. In production core allows write only for logins it has approved."
+
+  validation {
+    condition     = alltrue([for name in keys(var.agents) : can(regex("^[a-z][a-z0-9]{1,19}$", name))])
+    error_message = "Each agent's name must be 2-20 lowercase letters and digits, starting with a letter."
+  }
+
+  validation {
+    condition     = alltrue([for agent in values(var.agents) : contains(["read", "write"], agent.access)])
+    error_message = "Each agent's access must be \"read\" or \"write\"."
+  }
+
+  validation {
+    condition     = alltrue([for agent in values(var.agents) : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", agent.email))])
+    error_message = "Each agent needs a valid email address: their sign-in to the team tools, and where the invitation goes."
+  }
+
+  validation {
+    condition     = length(distinct([for agent in values(var.agents) : lower(agent.email)])) == length(var.agents)
+    error_message = "Two agents share an email address."
   }
 }
 

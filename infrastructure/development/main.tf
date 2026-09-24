@@ -13,4 +13,10 @@ module "service" {
   health_check_path       = var.health_check_path
   subdomain               = var.subdomain
   generated_secret_names  = var.generated_secret_names
+
+  # The team's own people: a login on this service's database each, and a
+  # sign-in to the team tools where the platform has a front door. Ships empty;
+  # see data/agents.example.json and data/README.md.
+  agents = jsondecode(file("${path.module}/data/agents.json"))
+
 }

@@ -143,3 +143,12 @@ variable "root_volume_size" {
   default     = 30
   description = "Root volume size in GiB on each host."
 }
+
+variable "agents" {
+  type = map(object({
+    email  = string
+    access = string
+  }))
+  default     = {}
+  description = "The service team's own people, from infrastructure/<environment>/agents.json: { name = { email, access } }. Each gets a login on this service's database only, <service>.<name>, with access \"read\" or \"write\", and where the platform has a front door a sign-in to the team tools. The checks are the model's."
+}

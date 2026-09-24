@@ -27,3 +27,8 @@ output "provision_function" {
   description = "Lambda the apply workflow invokes to create the service's database and user on a managed database. Null otherwise."
   value       = module.service.provision_function
 }
+
+output "agent_logins" {
+  description = "Each agent's database login, by name. Their passwords are in the service's secret, under agents."
+  value       = module.service.agent_logins
+}

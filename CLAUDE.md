@@ -11,11 +11,12 @@ This is a **blueprint**: many services clone it. Never commit anything service- 
 
 ## Where things live
 
-`modules/service-model` is pure (no resources) and tested with `terraform test`; put every check and derivation there. `modules/service` creates resources and composes the platform's own modules. `modules/service-hosting` is the service's own hosts, used only where the platform hosts services dedicated. The environment folders only pass variables through.
+`modules/service-model` is pure (no resources) and tested with `terraform test`; put every check and derivation there. `modules/service` creates resources and composes the platform's own modules. `modules/service-hosting` is the service's own hosts, used only where the platform hosts services dedicated. The environment folders only pass variables through, and read `data/agents.json` (the service's agents; see `data/README.md`).
 
 ## Contracts with the other repositories
 
 - **Core** publishes `/<project>/platform/config` (schema version 1) and generates this repository's IAM role from a `service-roles.json` entry of `kind: infra`. The role can touch only resources named `<project>-<service>-<environment>*`, keys under `services/<service>/` in the state bucket, and resources whose `Service` tag equals the service's name.
+- **Core's provisioning** reads the service's secret, including its `agents` entry (a JSON object of name, password and access), and creates each agent's login `<database>.<name>` on the service's database only. **Core's front door** reads `front-door/<service>.json` in the deploy bucket, the one object under that prefix this role may write (development and staging, where the contract publishes `team_front_door`).
 - **The application repository** reads `/<project>/services/<service>/config` ([docs/service-config.md](docs/service-config.md)). Changing its shape means bumping `schema_version`.
 
 ## Checks before a commit

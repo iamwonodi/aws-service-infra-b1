@@ -37,3 +37,8 @@ output "provision_function" {
   description = "Lambda the apply workflow invokes to create this service's database and user on a managed database. Null where provisioning goes through the EC2 host's document, or there is no database."
   value       = module.model.provision_function
 }
+
+output "agent_logins" {
+  description = "Each agent's database login, by name. Their passwords are in the service's secret, under agents."
+  value       = module.model.agent_logins
+}

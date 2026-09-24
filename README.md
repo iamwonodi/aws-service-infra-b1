@@ -24,13 +24,14 @@ The two repositories have separate roles, and neither can do the other's job: th
 | Resource | Notes |
 | --- | --- |
 | ECR repository `<service>/<type>` | immutable tags, scan on push, keeps the last 14 images |
-| Secret `<project>-<service>-<env>-secret-vault` (see the exception below) | generated application secrets, and the database name, user and password when there is a database |
+| Secret `<project>-<service>-<env>-secret-vault` (see the exception below) | generated application secrets, the database name, user and password when there is a database, and the agents' passwords and access levels (`agents`) |
 | Target group `<project>-<service>-<env>-tg` (see the exception below) | health check on `/health` |
 | ALB rule | `<service>.<domain>` to the target group, tagged `Service=<service>` |
 | Security group rule | the tier's load balancer may reach the service's port |
 | Auto scaling group attachment | the target group joins the tier's shared fleet |
 | SSM parameter `/<project>/services/<service>/config` | what the application repository reads; see [docs/service-config.md](docs/service-config.md) |
 | The service's database and user | published as a provisioning request; core's script on the database host creates them |
+| The team's agents, from `infrastructure/<env>/data/agents.json` | a login each on this service's database only, `<database>.<name>`, created with the database; in development and staging a sign-in to the team tools, declared as `front-door/<service>.json` in the deploy bucket. See `infrastructure/<env>/data/README.md` |
 
 Every name follows core's `<project>-<environment>-<service>-<resource>` convention (for example the config bucket `<project>-<env>-<service>-config`), because the permissions core grants this repository's role are scoped to exactly those names.
 

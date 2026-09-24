@@ -15,6 +15,9 @@
 #   ASG attachment      (shared) the target group joins the tier's auto scaling group
 #   hosts               (dedicated) the service's own group, role, bucket and document
 #   service config      /<project>/services/<service>/config, read by the app repository
+#   agents              (with a database) the team's own logins on its database,
+#                       their passwords in the secret; and, where the platform has
+#                       a front door, their emails declared for sign-ins
 #
 # The shared fleet, its load balancer and the database are core's, discovered
 # through the platform contract, never created or changed here except for the
@@ -50,6 +53,7 @@ module "model" {
   database_engine   = var.database_engine
   health_check_path = var.health_check_path
   subdomain         = var.subdomain
+  agents            = var.agents
 
   platform_json = data.aws_ssm_parameter.platform.insecure_value
 }
@@ -86,6 +90,16 @@ resource "random_password" "database" {
   override_special = "-_."
 }
 
+# One password per agent, in the platform's alphabet. To give an agent a new
+# one: terraform apply -replace='module.service.random_password.agent["<name>"]'.
+resource "random_password" "agent" {
+  for_each = var.agents
+
+  length           = 40
+  special          = true
+  override_special = "-_."
+}
+
 locals {
   secret_values = merge(
     { for name, generated in random_password.generated : name => generated.result },
@@ -93,6 +107,18 @@ locals {
       db_name     = module.model.database_identifier
       db_user     = module.model.database_identifier
       db_password = random_password.database[0].result
+    },
+    # The agents, for core's provisioning: a JSON object in one entry (the
+    # secret's values are strings). Only the service team's administrators and
+    # core's provisioning read it; the application's env file never includes it,
+    # since the deploy copies only the entries the env file names.
+    length(var.agents) == 0 ? {} : {
+      agents = jsonencode({
+        for name, agent in var.agents : name => {
+          password = random_password.agent[name].result
+          access   = agent.access
+        }
+      })
     },
   )
 
@@ -238,6 +264,26 @@ resource "aws_s3_object" "provisioning_extra_sql" {
   key    = "${module.model.provisioning_prefix}/extra.sql"
   source = var.database_extra_sql_path
   etag   = filemd5(coalesce(var.database_extra_sql_path, "/dev/null"))
+
+  tags = local.tags
+}
+
+# ------------------------------------------------------------------------------
+# The front door
+#
+# Where the platform has one (development, staging), the service declares its
+# agents' emails in its own file; core's function turns every declaration into
+# sign-ins to the team tools. Written even when empty, so removing the last agent
+# removes their sign-in. Destroying the service deletes it, and so theirs.
+# ------------------------------------------------------------------------------
+
+resource "aws_s3_object" "front_door_declaration" {
+  count = module.model.front_door_declaration_key == null ? 0 : 1
+
+  bucket       = module.model.platform.buckets.deploy
+  key          = module.model.front_door_declaration_key
+  content      = jsonencode({ emails = sort([for agent in values(var.agents) : lower(agent.email)]) })
+  content_type = "application/json"
 
   tags = local.tags
 }

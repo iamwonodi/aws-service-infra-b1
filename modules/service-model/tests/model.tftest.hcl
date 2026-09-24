@@ -503,16 +503,6 @@ run "a_name_in_the_platforms_database_family_is_refused" {
   expect_failures = [var.service_name]
 }
 
-run "a_name_that_would_be_a_persons_database_user_is_refused" {
-  command = plan
-
-  variables {
-    service_name = "agent-ada"
-  }
-
-  expect_failures = [var.service_name]
-}
-
 run "a_managed_mongodb_service_uses_the_documentdb_cluster" {
   command = plan
 
@@ -524,5 +514,141 @@ run "a_managed_mongodb_service_uses_the_documentdb_cluster" {
   assert {
     condition     = jsondecode(output.config_json).database.host == "core-production-mongodb.cluster-x.docdb.amazonaws.com" && jsondecode(output.config_json).database.port == 27017 && output.provision_function == "core-production-mongodb-provision"
     error_message = "a mongodb service connects to, and is provisioned by, the DocumentDB cluster"
+  }
+}
+
+run "a_services_agents_get_logins_of_their_own" {
+  command = plan
+
+  variables {
+    service_name = "billing-api"
+    agents = {
+      ada = { email = "Ada@Example.org", access = "write" }
+      bob = { email = "bob@example.org", access = "read" }
+    }
+  }
+
+  assert {
+    condition     = output.agent_logins == { ada = "billing_api.ada", bob = "billing_api.bob" }
+    error_message = "an agent's login is the service's database name, a dot, the agent's name"
+  }
+
+  assert {
+    condition     = output.front_door_declaration_key == null
+    error_message = "without a front door in the contract (production), nothing is declared"
+  }
+}
+
+run "where_there_is_a_front_door_the_service_declares_its_agents" {
+  command = plan
+
+  variables {
+    platform_json = <<-JSON
+      {
+        "schema_version": 1,
+        "project_name": "core",
+        "environment": "development",
+        "region": "af-south-1",
+        "domain_name": "dev.example.org",
+        "private_domain": "dev.example.org",
+        "vpc_id": "vpc-0abc",
+        "hosting_model": "shared",
+        "compute": { "ami_parameter": "/core/platform/ami/ubuntu", "scripts_manifest_parameter": "/core/platform/scripts-manifest", "platform_prefix": "_platform" },
+        "service_boundary_arn": null,
+        "buckets": { "deploy": "core-development-deploy", "assets": "core-development-assets" },
+        "fleet_update_document": "core-fleet-update",
+        "team_front_door": { "user_pool_id": "af-south-1_Abc", "user_pool_arn": "arn:aws:cognito-idp:af-south-1:123456789012:userpool/af-south-1_Abc", "domain": "core-development-team-123456789012", "declaration_prefix": "front-door/" },
+        "database": { "host": "db.dev.example.org", "provision_document": "core-database-provision" },
+        "tiers": {
+          "private":  { "listener_arn": "arn:aws:elasticloadbalancing:af-south-1:123456789012:listener/app/core-private-alb-development/50dc/f2f7", "alb_security_group_id": "sg-0privalb", "security_group_id": "sg-0priv", "asg_name": "core-development-private-asg" },
+          "internal": { "listener_arn": "arn:aws:elasticloadbalancing:af-south-1:123456789012:listener/app/core-internal-alb-development/60dc/a2f7", "alb_security_group_id": "sg-0intalb", "security_group_id": "sg-0int", "asg_name": "core-development-internal-asg" }
+        }
+      }
+    JSON
+
+    agents = {
+      ada = { email = "ada@example.org", access = "read" }
+    }
+  }
+
+  assert {
+    condition     = output.front_door_declaration_key == "front-door/auth.json"
+    error_message = "the service's own declaration, named after the service, under the prefix the contract publishes"
+  }
+}
+
+run "a_login_longer_than_mysqls_limit_is_refused" {
+  command = plan
+
+  variables {
+    service_name = "abcdefghijklmnopqrstuv"
+    agents = {
+      abcdefghij = { email = "a@example.org", access = "read" }
+    }
+  }
+
+  expect_failures = [terraform_data.model_invariants]
+}
+
+run "agents_without_a_database_are_refused" {
+  command = plan
+
+  variables {
+    database_engine = null
+    agents = {
+      ada = { email = "ada@example.org", access = "read" }
+    }
+  }
+
+  expect_failures = [terraform_data.model_invariants]
+}
+
+run "an_agent_name_that_is_not_a_plain_name_is_refused" {
+  command = plan
+
+  variables {
+    agents = {
+      "Ada.x" = { email = "ada@example.org", access = "read" }
+    }
+  }
+
+  expect_failures = [var.agents]
+}
+
+run "an_unknown_access_level_is_refused" {
+  command = plan
+
+  variables {
+    agents = {
+      ada = { email = "ada@example.org", access = "admin" }
+    }
+  }
+
+  expect_failures = [var.agents]
+}
+
+run "two_agents_sharing_an_email_are_refused" {
+  command = plan
+
+  variables {
+    agents = {
+      ada  = { email = "ada@example.org", access = "read" }
+      ada2 = { email = "ADA@example.org", access = "read" }
+    }
+  }
+
+  expect_failures = [var.agents]
+}
+
+run "a_service_may_be_called_agent_something_now" {
+  command = plan
+
+  variables {
+    service_name = "agent-desk"
+  }
+
+  assert {
+    condition     = output.database_identifier == "agent_desk"
+    error_message = "logins contain a dot, which a service's user never does, so agent- is no longer reserved"
   }
 }

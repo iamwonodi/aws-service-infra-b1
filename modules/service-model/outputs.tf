@@ -103,3 +103,15 @@ output "provision_function" {
   description = "Lambda that creates this service's database and user on a managed database, or null where the platform provisions through the EC2 host's document instead."
   value       = local.provision_function
 }
+
+output "agent_logins" {
+  description = "Each agent's database login, by name: <database identifier>.<name>."
+  value       = local.agent_logins
+
+  depends_on = [terraform_data.model_invariants]
+}
+
+output "front_door_declaration_key" {
+  description = "The deploy bucket object in which the service declares its agents' emails to the front door. Null where the platform has no front door."
+  value       = local.front_door_declaration_key
+}
