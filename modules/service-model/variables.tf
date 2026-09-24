@@ -25,11 +25,14 @@ variable "service_name" {
   }
 
   # Service secrets are scoped by name prefix, <project>-<service>-<environment>*.
-  # Core names each database administrator secret <project>-database-admin-<engine>-...,
-  # so a service called database-admin-<engine> would match its prefix.
+  # Core names its database secrets <project>-database-<something>-... (each
+  # engine's administrator, the people's passwords), so a service whose name
+  # begins database- could match one. A name beginning agent- would give the
+  # service the database user agent_<name>, which is a person's. Core refuses
+  # both too.
   validation {
-    condition     = !startswith(var.service_name, "database-admin")
-    error_message = "service_name must not begin with database-admin: core's database administrator secrets are named that way."
+    condition     = !startswith(var.service_name, "database-") && !startswith(var.service_name, "agent-")
+    error_message = "service_name must not begin with database- (core's database secrets are named that way) or agent- (a person's database user is agent_<name>)."
   }
 }
 

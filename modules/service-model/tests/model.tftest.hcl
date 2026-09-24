@@ -493,6 +493,26 @@ run "a_name_matching_an_administrator_secret_is_refused" {
   expect_failures = [var.service_name]
 }
 
+run "a_name_in_the_platforms_database_family_is_refused" {
+  command = plan
+
+  variables {
+    service_name = "database-people"
+  }
+
+  expect_failures = [var.service_name]
+}
+
+run "a_name_that_would_be_a_persons_database_user_is_refused" {
+  command = plan
+
+  variables {
+    service_name = "agent-ada"
+  }
+
+  expect_failures = [var.service_name]
+}
+
 run "a_managed_mongodb_service_uses_the_documentdb_cluster" {
   command = plan
 
