@@ -1,6 +1,8 @@
 # First setup
 
-Run this once per service, in a clone of this blueprint. Everything is per **environment**, and only `development` is enabled today.
+Run this once per service, in a clone of this blueprint. Everything is per **environment**.
+
+**Which environments:** a service runs in any one, two or all three of development, staging and production, listed in `.github/environments.json` (`scripts/init-service.sh --environments development,production`, say). Every workflow reads it; the other folders stay, ignored. A service can run **only where core runs**: plans stop, with a message saying so, if the environment has no role for this repository or no platform contract from core.
 
 ## 0. Prerequisites
 

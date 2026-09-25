@@ -11,7 +11,7 @@ fresh(){
   # Each case pins which environments are enabled, rather than inheriting the
   # repository's own list.
   echo '["development"]' > "${WORK}/repo/.github/environments.json"
-  cp "${SCRIPTS}/ci/check-placeholders.sh" "${WORK}/repo/scripts/ci/"
+  cp "${SCRIPTS}/ci/check-placeholders.sh" "${SCRIPTS}/ci/enabled-environments.sh" "${WORK}/repo/scripts/ci/"
   git -C "${WORK}/repo" init -q; git -C "${WORK}/repo" remote add origin https://github.com/acme/auth-infra.git
   export INIT_REPO_ROOT="${WORK}/repo" FAKE_GH_LOG="${WORK}/gh.log"; : > "${FAKE_GH_LOG}"
 }
@@ -95,4 +95,15 @@ run >/dev/null 2>&1; rc=$?
 check "all three shipped environments initialise"        test $rc -eq 0
 check "production files are written too"                 test "$(val production bucket backend.tf)" = acme-production-tfstate
 check "and production is guarded by the reviewers"       bash -c "echo '$(body_of production)' | jq -e '(.reviewers | length) == 1' >/dev/null"
+echo "== environments"
+fresh; run --environments production,development >"${WORK}/out.txt" 2>&1; rc=$?
+check "--environments succeeds"                        test $rc -eq 0
+check "the list is written, in order"                  bash -c "[ \"\$(jq -c . '${WORK}/repo/.github/environments.json')\" = '[\"development\",\"production\"]' ]"
+check "production's files are set"                    bash -c "grep -qx 'service_name *= *\"auth\"' '${WORK}/repo/infrastructure/production/terraform.tfvars' || grep -q 'service_name = \"auth\"' '${WORK}/repo/infrastructure/production/terraform.tfvars'"
+check "staging's are left alone"                       grep -q CHANGE_ME "${WORK}/repo/infrastructure/staging/terraform.tfvars"
+check "no GitHub Environment for staging"              bash -c "! grep -q 'environments/staging' '${FAKE_GH_LOG}'"
+fresh; echo '["development","prod"]' > "${WORK}/repo/.github/environments.json"
+check "a misspelt list is refused"                     bash -c "! bash '${INIT}' ${ARGS[*]} >/dev/null 2>&1"
+fresh
+check "an unknown --environments is refused"           bash -c "! bash '${INIT}' ${ARGS[*]} --environments prod >/dev/null 2>&1"
 finish

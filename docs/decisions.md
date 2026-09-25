@@ -9,7 +9,7 @@
 | Environments are folders, not repositories | The same code proven in each environment; repositories per environment drift |
 | `infrastructure/<env>` is thin; the logic is in `modules/` | Environments can differ in what they compose (dedicated hosting later) without duplicating logic |
 | Everything decidable before any resource exists lives in a pure module (`service-model`) | It is tested offline, and its invariants stop a plan with a message naming the cause |
-| Only environments in `.github/environments.json` run | A change to shared code must not make CI plan an environment that cannot yet be planned |
+| Only environments in `.github/environments.json` run: any one, two or all three, checked (known names, none twice), and only ones core runs | A project may run fewer environments than three, and a service fewer than core. A change to shared code must not make CI plan an environment that cannot be planned; a plan where core does not run stops before Terraform, saying so |
 | The port is claimed after the apply, checked (read-only) on the pull request | An abandoned pull request must not hold a port for ever |
 | Port and name registry is optional, and its absence is a warning on every plan | A blueprint should work without a second repository, but not silently |
 | Resource names follow `<project>-<environment>-<service>-<resource>` | Core's role for this repository is scoped to exactly those names, and the order matches 16 of the 18 published modules |

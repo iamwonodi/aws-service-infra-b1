@@ -25,15 +25,8 @@ set -euo pipefail
 ROOT="${RESOLVE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 ENABLED_FILE="${ROOT}/.github/environments.json"
 
-if [[ ! -f "${ENABLED_FILE}" ]]; then
-  echo "ERROR: ${ENABLED_FILE} not found." >&2
-  exit 1
-fi
-
-if ! ENABLED="$(jq -c 'if type == "array" and all(.[]; type == "string") then . else error("not an array of strings") end' "${ENABLED_FILE}" 2>/dev/null)"; then
-  echo "ERROR: ${ENABLED_FILE} must be a JSON array of environment names." >&2
-  exit 1
-fi
+# Checked (known names, none twice, not empty) and in the platform's order.
+ENABLED="$(ENVIRONMENTS_FILE="${ENABLED_FILE}" bash "$(dirname "${BASH_SOURCE[0]}")/enabled-environments.sh")"
 
 EVENT="${1:-}"
 

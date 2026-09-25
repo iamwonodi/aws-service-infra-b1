@@ -103,11 +103,24 @@ jobs:
       - name: Read Service Identity
         run: bash scripts/ci/read-service-info.sh infrastructure/${{ matrix.environment }} >> "${GITHUB_ENV}"
 
+      # Core creates this service's role only in environments it runs.
+      - name: Check The Role Exists
+        env:
+          ROLE: ${{ secrets.TF_AWS_ROLE_ARN }}
+        run: |
+          if [[ -z "${ROLE}" ]]; then
+            echo "::error::No TF_AWS_ROLE_ARN on the ${{ matrix.environment }}-plan environment. Either core does not run ${{ matrix.environment }} (remove it from .github/environments.json), or run scripts/fetch-role-arn.sh once core has applied it."
+            exit 1
+          fi
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.TF_AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Check Core Runs This Environment
+        run: bash scripts/ci/check-platform.sh "${PROJECT_NAME}" "${{ vars.AWS_REGION }}" "${{ matrix.environment }}"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4

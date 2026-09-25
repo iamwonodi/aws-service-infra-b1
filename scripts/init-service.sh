@@ -28,11 +28,17 @@ set -euo pipefail
 # Usage:
 #   scripts/init-service.sh --project NAME --service NAME --region REGION --port N \
 #       [--type web] [--tier private|internal] [--database postgres|mysql|mongodb|none] \
-#       [--reviewers login1,login2] [--repo OWNER/REPO] [--skip-github] [--dry-run]
+#       [--environments LIST] [--reviewers login1,login2] [--repo OWNER/REPO] \
+#       [--skip-github] [--dry-run]
 #
 #   --project   the project core was set up with (bucket names derive from it)
 #   --service   the service's name; must match core's service-roles.json
 #   --port      the host port; unique per tier (the port registry enforces it)
+#   --environments LIST
+#               the environments this service runs in: comma-separated, any of
+#               development, staging and production, and only ones core runs.
+#               Written to .github/environments.json; omitted, the current list
+#               is kept.
 #   --dry-run   show what would change; write and call nothing
 #
 # Needs: bash, sed, jq; gh (authenticated) unless --skip-github or --dry-run.
@@ -40,7 +46,7 @@ set -euo pipefail
 
 REPO_ROOT="${INIT_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-PROJECT="" SERVICE="" REGION="" PORT="" TYPE="web" TIER="private" DATABASE="postgres" REVIEWERS="" REPO=""
+PROJECT="" SERVICE="" REGION="" PORT="" TYPE="web" TIER="private" DATABASE="postgres" REVIEWERS="" REPO="" ENVIRONMENTS_ARG=""
 SKIP_GITHUB=false
 DRY_RUN=false
 
@@ -57,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --database)    DATABASE="${2:-}"; shift 2 ;;
     --reviewers)   REVIEWERS="${2:-}"; shift 2 ;;
     --repo)        REPO="${2:-}"; shift 2 ;;
+    --environments) ENVIRONMENTS_ARG="${2:-}"; shift 2 ;;
     --skip-github) SKIP_GITHUB=true; shift ;;
     --dry-run)     DRY_RUN=true; shift ;;
     -h|--help)     usage; exit 0 ;;
@@ -98,9 +105,24 @@ for command in sed jq; do
 done
 
 ENABLED_FILE="${REPO_ROOT}/.github/environments.json"
-[[ -f "${ENABLED_FILE}" ]] || { echo "ERROR: ${ENABLED_FILE} not found." >&2; exit 1; }
-mapfile -t ENVIRONMENTS < <(jq -r '.[]' "${ENABLED_FILE}")
-[[ ${#ENVIRONMENTS[@]} -gt 0 ]] || { echo "ERROR: no environments are enabled in ${ENABLED_FILE}." >&2; exit 1; }
+
+if [[ -n "${ENVIRONMENTS_ARG}" ]]; then
+  [[ "${ENVIRONMENTS_ARG}" =~ ^(development|staging|production)(,(development|staging|production))*$ ]] \
+    || { echo "ERROR: --environments must be a comma-separated list of development, staging and production." >&2; exit 1; }
+  # In the platform's order, each once.
+  ENVIRONMENTS_JSON="$(jq -cn --arg list "${ENVIRONMENTS_ARG}" \
+    '($list | split(",")) as $given | [("development","staging","production") | select(. as $e | $given | index($e))]')"
+else
+  [[ -f "${ENABLED_FILE}" ]] || { echo "ERROR: ${ENABLED_FILE} not found; pass --environments." >&2; exit 1; }
+  # Checked the way every workflow checks it: known names, none twice, not empty.
+  ENVIRONMENTS_JSON="$(ENVIRONMENTS_FILE="${ENABLED_FILE}" bash "${REPO_ROOT}/scripts/ci/enabled-environments.sh")"
+fi
+mapfile -t ENVIRONMENTS < <(jq -r '.[]' <<< "${ENVIRONMENTS_JSON}")
+
+echo "Environments: ${ENVIRONMENTS[*]} (each must be one core runs: its platform contract must exist there)"
+if [[ "${DRY_RUN}" != "true" ]]; then
+  jq -c '.' <<< "${ENVIRONMENTS_JSON}" > "${ENABLED_FILE}"
+fi
 
 if [[ "${SKIP_GITHUB}" != "true" && "${DRY_RUN}" != "true" ]]; then
   command -v gh >/dev/null 2>&1 || { echo "ERROR: gh is required (or pass --skip-github)." >&2; exit 1; }

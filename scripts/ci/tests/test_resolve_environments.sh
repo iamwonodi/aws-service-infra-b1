@@ -37,4 +37,22 @@ check "dispatch: an empty request is refused"          bash -c "! RESOLVE_ROOT='
 check "an unknown event is refused"                    bash -c "! RESOLVE_ROOT='${WORK}/r' bash '$R' push >/dev/null 2>&1"
 repo '{"not":"an array"}'
 check "a malformed environments file is refused"       bash -c "! RESOLVE_ROOT='${WORK}/r' bash '$R' workflow_dispatch development >/dev/null 2>&1"
+echo "== the list is checked"
+repo '["production","development"]'
+change modules/service/a
+check "in the platform's order, whatever the file's"      test "$(run pull_request "$(sha HEAD~1)" "$(sha HEAD)")" = '["development","production"]'
+check "a manual run of one not listed is refused"         bash -c "! RESOLVE_ROOT='${WORK}/r' bash '$R' workflow_dispatch staging >/dev/null 2>&1"
+repo '["development","prod"]'
+check "a misspelt environment is refused"                 bash -c "! RESOLVE_ROOT='${WORK}/r' bash '$R' workflow_dispatch development >/dev/null 2>&1"
+repo '["development","development"]'
+check "an environment listed twice is refused"            bash -c "! RESOLVE_ROOT='${WORK}/r' bash '$R' workflow_dispatch development >/dev/null 2>&1"
+
+echo "== discover-environments-from-artifacts.sh (apply)"
+A="${SCRIPTS}/ci/discover-environments-from-artifacts.sh"
+printf '%s' '["development","production"]' > "${WORK}/enabled.json"
+mkdir -p "${WORK}/art/a" "${WORK}/art/b"
+echo '{"environment":"production"}' > "${WORK}/art/a/deployment-metadata.json"
+check "a plan for an enabled environment is applied"      test "$(ENVIRONMENTS_FILE="${WORK}/enabled.json" bash "$A" "${WORK}/art" 2>/dev/null)" = '["production"]'
+echo '{"environment":"staging"}' > "${WORK}/art/b/deployment-metadata.json"
+check "a plan for one not run is refused"                 bash -c "! ENVIRONMENTS_FILE='${WORK}/enabled.json' bash '$A' '${WORK}/art' >/dev/null 2>&1"
 finish

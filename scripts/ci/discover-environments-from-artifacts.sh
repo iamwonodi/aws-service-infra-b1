@@ -50,6 +50,10 @@ for FILE in "${METADATA_FILES[@]}"; do
     exit 1
   fi
 
+  # The plan workflow plans only environments this service runs; a plan for
+  # another would mean .github/environments.json changed in between.
+  bash "$(dirname "${BASH_SOURCE[0]}")/enabled-environments.sh" --check "${ENV_NAME}"
+
   ENVIRONMENTS="$(jq -c --arg env "${ENV_NAME}" '. + [$env]' <<< "${ENVIRONMENTS}")"
 done
 
