@@ -281,6 +281,15 @@ placeholder_dirs=()
 for env in "${ENVIRONMENTS[@]}"; do placeholder_dirs+=("${REPO_ROOT}/infrastructure/${env}"); done
 bash "${REPO_ROOT}/scripts/ci/check-placeholders.sh" "${placeholder_dirs[@]}"
 
+# The lock file must hold every platform's hashes (CI on Linux rejects the
+# single-platform one a plain `terraform init` writes), so the command is printed
+# once per enabled environment rather than left for the person to remember.
+LOCK_COMMAND='terraform providers lock -platform=windows_amd64 -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64'
+LOCK_STEPS=""
+for env in "${ENVIRONMENTS[@]}"; do
+  LOCK_STEPS+="       (cd infrastructure/${env} && terraform init && ${LOCK_COMMAND})"$'\n'
+done
+
 cat <<NEXT
 
 Done. Next:
@@ -294,7 +303,12 @@ Done. Next:
   2. Once core has applied it, connect this repository to its role:
        scripts/fetch-role-arn.sh --core OWNER/CORE-REPOSITORY --environment development
 
-  3. Commit these changes and open a pull request. CI plans it.
+  3. Lock the providers for every platform, per environment. Do not commit the
+     lock file a plain 'terraform init' writes: it holds only this machine's
+     hash and CI rejects it.
+${LOCK_STEPS}
+  4. Commit these changes, including each .terraform.lock.hcl, and open a pull
+     request. CI plans it.
 
 See docs/first-setup.md for the full walkthrough.
 NEXT
