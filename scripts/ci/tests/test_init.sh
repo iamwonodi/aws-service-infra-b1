@@ -32,6 +32,8 @@ check "state key is under services/<service>/"           test "$(val development
 check "backend region written"                           test "$(val development region backend.tf)" = eu-west-1
 check "tier and type keep their values"                  bash -c "[ \"$(val development tier terraform.tfvars)\" = private ] && [ \"$(val development service_type terraform.tfvars)\" = web ]"
 check "comments in backend.tf survive"                   grep -q 'native S3 locking' "${WORK}/repo/infrastructure/development/backend.tf"
+check "next steps print the all-platform lock command"   grep -q 'terraform init && terraform providers lock -platform=windows_amd64 -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64' "${WORK}/out.txt"
+check "once per enabled environment (development only)"  bash -c "[ \"\$(grep -c 'terraform providers lock' '${WORK}/out.txt')\" = 1 ] && grep -q 'infrastructure/development &&' '${WORK}/out.txt'"
 check "no placeholder remains"                           bash "${WORK}/repo/scripts/ci/check-placeholders.sh" "${WORK}/repo/infrastructure/development"
 snap="$(cat "${WORK}/repo"/infrastructure/development/{terraform.tfvars,backend.tf} | sha256sum)"
 run >/dev/null 2>&1

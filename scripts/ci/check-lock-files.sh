@@ -11,7 +11,11 @@ set -euo pipefail
 #
 # For each directory given, this fails unless:
 #   - .terraform.lock.hcl is tracked by git, and
-#   - it lists every provider the directory's own required_providers declares.
+#   - it lists every provider the directory's own required_providers declares, and
+#   - every provider block carries at least MIN_H1 "h1:" hashes, one per platform
+#     the lock command locks. A plain `terraform init` records only the hash of
+#     the machine it ran on (one h1:), and CI on Linux then rejects the cached
+#     provider as not matching the lock file.
 #
 # Providers that only child modules declare are checked by Terraform itself: the
 # workflows run `terraform init -lockfile=readonly`, which refuses a lock file
@@ -23,6 +27,7 @@ set -euo pipefail
 [[ $# -gt 0 ]] || { echo "Usage: check-lock-files.sh <root-dir>..." >&2; exit 1; }
 
 LOCK_COMMAND='terraform providers lock -platform=windows_amd64 -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64'
+MIN_H1=4
 FAILED=0
 
 for DIR in "$@"; do
@@ -53,6 +58,23 @@ for DIR in "$@"; do
 
   if [[ ${#MISSING[@]} -gt 0 ]]; then
     echo "::error file=${LOCK}::${LOCK} does not lock ${MISSING[*]}. Run 'terraform -chdir=${DIR} init -upgrade', then '${LOCK_COMMAND}' there, and commit it."
+    FAILED=1
+    continue
+  fi
+
+  # One "provider|count" line per provider block; a provider with no h1: line
+  # counts 0. The h1: hashes sit between the block's opening line and its "}".
+  THIN=()
+  while IFS='|' read -r NAME COUNT; do
+    [[ "${COUNT}" -ge "${MIN_H1}" ]] || THIN+=("${NAME} has ${COUNT}")
+  done < <(awk '
+    /^provider "/ { name = $2; gsub(/"/, "", name); sub(/^registry\.terraform\.io\//, "", name); count = 0; inblock = 1; next }
+    inblock && /^[[:space:]]*"h1:/ { count++ }
+    inblock && /^}/ { print name "|" count; inblock = 0 }
+  ' "${LOCK}")
+
+  if [[ ${#THIN[@]} -gt 0 ]]; then
+    echo "::error file=${LOCK}::${LOCK} needs at least ${MIN_H1} h1: hashes per provider (one per platform), but $(IFS=';'; echo "${THIN[*]}") -- it was probably written by a plain 'terraform init'. Run '${LOCK_COMMAND}' in ${DIR} and commit it."
     FAILED=1
     continue
   fi

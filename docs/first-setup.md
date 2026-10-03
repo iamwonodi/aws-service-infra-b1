@@ -26,7 +26,14 @@ Options: `--type web`, `--tier private|internal`, `--database postgres|mysql|mon
 - `--port` is the host port. Services share a host, so it must be unique on the tier.
 - The state key is `services/<service>/terraform.tfstate`. Core lets this repository's role touch only keys under `services/<service>/`.
 
-Then run `terraform init` in `infrastructure/development` and commit the `.terraform.lock.hcl` it creates.
+Then, in `infrastructure/development`, run `terraform init` followed by the all-platform lock command, and commit the `.terraform.lock.hcl`:
+
+```bash
+terraform init
+terraform providers lock -platform=windows_amd64 -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64
+```
+
+A plain `terraform init` records only your own machine's hash (one `h1:` per provider), and CI, which runs on Linux, then rejects the cached provider. `scripts/ci/check-lock-files.sh` fails a lock file with fewer than four `h1:` hashes per provider. `init-service.sh` prints this command for each enabled environment.
 
 ## 2. Ask core for a role
 
